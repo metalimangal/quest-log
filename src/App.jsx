@@ -34,135 +34,115 @@ const CATEGORIES = [
   { name:"Fitness",  icon:"💪", color:"#E85D75" },
   { name:"Study",    icon:"📚", color:"#7C4DFF" },
 ];
+
 const PRIORITIES = [
   { name:"High",   color:"#E85D75", bg:"#E85D7518", pts:30 },
   { name:"Medium", color:"#E8A838", bg:"#E8A83818", pts:15 },
   { name:"Low",    color:"#52C97F", bg:"#52C97F18", pts:5  },
 ];
+
 const RECURRENCE = ["None","Daily","Weekly","Monthly"];
 const TODAY = new Date().toISOString().split("T")[0];
 
-// ── GOOGLE CALENDAR SCOPES (read + create only, NO delete) ─────────────────
-const GCAL_SCOPES = [
-  "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/calendar.events",
-].join(" ");
-
-function rollGacha() {
-  const total = Object.values(RARITY_CONFIG).reduce((s,r)=>s+r.weight,0);
-  let rand = Math.random()*total, rarity="Common";
-  for(const [r,cfg] of Object.entries(RARITY_CONFIG)){ rand-=cfg.weight; if(rand<=0){rarity=r;break;} }
-  const pool = CREATURES.filter(c=>c.rarity===rarity);
-  return pool[Math.floor(Math.random()*pool.length)];
+// ── GOOGLE CALENDAR LINK BUILDER (no OAuth, no credentials) ───────────────
+function makeGCalLink(task) {
+  if (!task.due) return null;
+  const base  = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+  const title = encodeURIComponent(task.title);
+  let dates;
+  if (task.time) {
+    const start = new Date(`${task.due}T${task.time}:00`);
+    const end   = new Date(start.getTime() + 60 * 60 * 1000);
+    const fmt   = d => d.toISOString().replace(/[-:]/g,"").split(".")[0] + "Z";
+    dates = `${fmt(start)}/${fmt(end)}`;
+  } else {
+    const d = task.due.replace(/-/g,"");
+    dates = `${d}/${d}`;
+  }
+  const details = encodeURIComponent(
+    `Category: ${task.category}\nPriority: ${task.priority}${task.repo ? `\nRepo: github.com/${task.repo}` : ""}`
+  );
+  return `${base}&text=${title}&dates=${dates}&details=${details}`;
 }
-const save=(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} };
-const load=(k,d)=>{ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch{ return d; } };
+
+// ── HELPERS ────────────────────────────────────────────────────────────────
+function rollGacha() {
+  const total = Object.values(RARITY_CONFIG).reduce((s,r) => s + r.weight, 0);
+  let rand = Math.random() * total, rarity = "Common";
+  for (const [r, cfg] of Object.entries(RARITY_CONFIG)) {
+    rand -= cfg.weight;
+    if (rand <= 0) { rarity = r; break; }
+  }
+  const pool = CREATURES.filter(c => c.rarity === rarity);
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } };
 
 const SAMPLE_TASKS = [
-  { id:1, title:"Prepare Q2 report",         category:"Work",     priority:"High",   due:TODAY,        time:"10:00", recurring:"None",  done:false, tags:["urgent"], repo:null, gcalId:null },
-  { id:2, title:"Grocery shopping",          category:"Personal", priority:"Medium", due:TODAY,        time:"18:00", recurring:"Weekly",done:false, tags:["errands"],repo:null, gcalId:null },
-  { id:3, title:"Morning run — 5km",         category:"Fitness",  priority:"Medium", due:TODAY,        time:"07:00", recurring:"Daily", done:true,  tags:["cardio"], repo:null, gcalId:null },
-  { id:4, title:"Read: React Deep Dive ch4", category:"Study",    priority:"Low",    due:"2026-03-15", time:"20:00", recurring:"None",  done:false, tags:["coding"], repo:null, gcalId:null },
+  { id:1, title:"Prepare Q2 report",         category:"Work",     priority:"High",   due:TODAY,        time:"10:00", recurring:"None",   done:false, tags:["urgent"], repo:null },
+  { id:2, title:"Grocery shopping",          category:"Personal", priority:"Medium", due:TODAY,        time:"18:00", recurring:"Weekly", done:false, tags:["errands"],repo:null },
+  { id:3, title:"Morning run — 5km",         category:"Fitness",  priority:"Medium", due:TODAY,        time:"07:00", recurring:"Daily",  done:true,  tags:["cardio"], repo:null },
+  { id:4, title:"Read: React Deep Dive ch4", category:"Study",    priority:"Low",    due:"2026-03-15", time:"20:00", recurring:"None",   done:false, tags:["coding"], repo:null },
 ];
 
 // ── FLOAT TEXT ─────────────────────────────────────────────────────────────
 function FloatText({ text, color, x, y, onDone }) {
-  const [op,setOp]=useState(1),[ty,setTy]=useState(0);
-  useEffect(()=>{
-    const t1=setTimeout(()=>{setOp(0);setTy(-45);},80);
-    const t2=setTimeout(onDone,900);
-    return()=>{clearTimeout(t1);clearTimeout(t2);};
-  },[]);
-  return <div style={{position:"fixed",left:x,top:y,pointerEvents:"none",zIndex:9999,fontFamily:"'Press Start 2P',monospace",fontSize:13,color,fontWeight:900,transition:"opacity 0.82s,transform 0.82s",opacity:op,transform:`translateY(${ty}px) translateX(-50%)`,textShadow:`0 0 10px ${color}`}}>{text}</div>;
-}
-
-// ── GOOGLE CALENDAR SETUP MODAL ────────────────────────────────────────────
-function GCalSetup({ clientId, onSave, onDisconnect, onClose, isConnected, calUser }) {
-  const [val,setVal]=useState(clientId||"");
-  const inp={background:"#0f0f1e",border:"1px solid #2e2e50",borderRadius:9,padding:"11px 14px",color:"#e8e8f0",fontSize:13,outline:"none",width:"100%",boxSizing:"border-box",fontFamily:"monospace"};
+  const [op, setOp] = useState(1), [ty, setTy] = useState(0);
+  useEffect(() => {
+    const t1 = setTimeout(() => { setOp(0); setTy(-45); }, 80);
+    const t2 = setTimeout(onDone, 900);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
   return (
-    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:400,padding:20}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#0d0d20",border:"1px solid #2e2e50",borderRadius:20,padding:28,maxWidth:500,width:"100%",maxHeight:"90vh",overflowY:"auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <h2 style={{fontFamily:"'Press Start 2P',monospace",fontSize:11,color:"#e8e8f0",margin:0}}>📅 GOOGLE CALENDAR</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer"}}>✕</button>
-        </div>
-
-        {isConnected && calUser && (
-          <div style={{background:"#23863622",border:"1px solid #23863644",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#52C97F",display:"flex",alignItems:"center",gap:8}}>
-            ✓ Connected as <strong>{calUser}</strong>
-          </div>
-        )}
-
-        <div style={{background:"#ffffff06",border:"1px solid #1e1e38",borderRadius:12,padding:14,marginBottom:16,fontSize:11,color:"#666",lineHeight:1.9}}>
-          <div style={{color:"#4285F4",fontFamily:"'Press Start 2P',monospace",fontSize:8,marginBottom:8}}>PERMISSIONS GRANTED</div>
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <span style={{color:"#52C97F",fontSize:16}}>✓</span>
-              <span><strong style={{color:"#ccc"}}>Read events</strong> — see your calendar in the app</span>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <span style={{color:"#52C97F",fontSize:16}}>✓</span>
-              <span><strong style={{color:"#ccc"}}>Create events</strong> — push tasks to your calendar</span>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <span style={{color:"#E85D75",fontSize:16}}>✗</span>
-              <span><strong style={{color:"#ccc"}}>Delete calendars</strong> — not requested, not possible</span>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <span style={{color:"#E85D75",fontSize:16}}>✗</span>
-              <span><strong style={{color:"#ccc"}}>Modify settings</strong> — not requested, not possible</span>
-            </div>
-          </div>
-        </div>
-
-        <label style={{fontSize:8,color:"#555",fontFamily:"'Press Start 2P',monospace"}}>OAUTH CLIENT ID</label>
-        <input style={{...inp,marginTop:6,marginBottom:14}} placeholder="xxxxx.apps.googleusercontent.com" value={val} onChange={e=>setVal(e.target.value)}/>
-
-        <div style={{background:"#ffffff06",border:"1px solid #1e1e38",borderRadius:12,padding:12,marginBottom:16,fontSize:11,color:"#666",lineHeight:1.8}}>
-          <div style={{color:"#FFD740",fontFamily:"'Press Start 2P',monospace",fontSize:8,marginBottom:8}}>WHERE TO GET CLIENT ID</div>
-          1. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style={{color:"#4285F4"}}>console.cloud.google.com → Credentials</a><br/>
-          2. Create OAuth 2.0 Client ID → Web application<br/>
-          3. Add <code style={{color:"#52C97F"}}>http://localhost:5173</code> to origins<br/>
-          4. Add <code style={{color:"#52C97F"}}>https://YOUR-NAME.github.io</code> to origins<br/>
-          5. Copy the Client ID and paste above
-        </div>
-
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:10,border:"1px solid #2e2e50",background:"none",color:"#777",cursor:"pointer",fontSize:12}}>Cancel</button>
-          <button onClick={()=>onSave(val.trim())} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#4285F4,#34A853)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>SAVE & CONNECT</button>
-        </div>
-        {isConnected&&<button onClick={onDisconnect} style={{width:"100%",marginTop:8,padding:"8px",borderRadius:10,border:"1px solid #E85D7533",background:"#E85D7511",color:"#E85D75",cursor:"pointer",fontSize:11}}>Disconnect Google Calendar</button>}
-      </div>
-    </div>
+    <div style={{
+      position:"fixed", left:x, top:y, pointerEvents:"none", zIndex:9999,
+      fontFamily:"'Press Start 2P',monospace", fontSize:13, color,
+      fontWeight:900, transition:"opacity 0.82s,transform 0.82s",
+      opacity:op, transform:`translateY(${ty}px) translateX(-50%)`,
+      textShadow:`0 0 10px ${color}`
+    }}>{text}</div>
   );
 }
 
 // ── GITHUB SETUP ───────────────────────────────────────────────────────────
 function GitHubSetup({ token, onSave, onClose }) {
-  const [val,setVal]=useState(token||"");
+  const [val, setVal] = useState(token || "");
+  const inp = {
+    background:"#0f0f1e", border:"1px solid #2e2e50", borderRadius:9,
+    padding:"11px 14px", color:"#e8e8f0", fontSize:13, outline:"none",
+    width:"100%", boxSizing:"border-box", fontFamily:"monospace",
+  };
   return (
-    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:400,padding:20}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:400,padding:20}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{background:"#0d0d20",border:"1px solid #2e2e50",borderRadius:20,padding:28,maxWidth:480,width:"100%"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
           <h2 style={{fontFamily:"'Press Start 2P',monospace",fontSize:11,color:"#e8e8f0",margin:0}}>🔑 GITHUB CONNECT</h2>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
-        <p style={{fontSize:12,color:"#666",marginBottom:16,lineHeight:1.6}}>Token stored only in your browser, sent only to GitHub's API.</p>
-        <div style={{background:"#ffffff06",border:"1px solid #1e1e38",borderRadius:12,padding:14,marginBottom:14,fontSize:11,color:"#666",lineHeight:1.8}}>
+        <p style={{fontSize:12,color:"#666",marginBottom:16,lineHeight:1.6}}>
+          Token stored only in your browser, sent only to GitHub's API.
+        </p>
+        <div style={{background:"#ffffff06",border:"1px solid #1e1e38",borderRadius:12,padding:14,marginBottom:14,fontSize:11,color:"#666",lineHeight:1.9}}>
           <div style={{color:"#FFD740",fontFamily:"'Press Start 2P',monospace",fontSize:8,marginBottom:8}}>HOW TO GET A TOKEN</div>
           1. <a href="https://github.com/settings/tokens" target="_blank" style={{color:"#4A90D9"}}>github.com → Settings → Developer settings</a><br/>
           2. Personal access tokens → Tokens (classic)<br/>
           3. Generate new token → check <code style={{color:"#52C97F"}}>repo</code> scope<br/>
           4. Copy & paste below
         </div>
-        <input type="password" value={val} onChange={e=>setVal(e.target.value)} placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-          style={{width:"100%",background:"#0f0f1e",border:"1px solid #2e2e50",borderRadius:9,padding:"11px 14px",color:"#e8e8f0",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"monospace",marginBottom:14}}/>
+        <input type="password" value={val} onChange={e => setVal(e.target.value)}
+          placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style={{...inp, marginBottom:14}} />
         <div style={{display:"flex",gap:10}}>
           <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:10,border:"1px solid #2e2e50",background:"none",color:"#777",cursor:"pointer",fontSize:12}}>Cancel</button>
-          <button onClick={()=>onSave(val.trim())} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#238636,#2ea043)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>SAVE TOKEN</button>
+          <button onClick={() => onSave(val.trim())} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#238636,#2ea043)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>SAVE TOKEN</button>
         </div>
-        {token&&<button onClick={()=>onSave("")} style={{width:"100%",marginTop:8,padding:"8px",borderRadius:10,border:"1px solid #E85D7533",background:"#E85D7511",color:"#E85D75",cursor:"pointer",fontSize:11}}>Disconnect GitHub</button>}
+        {token && (
+          <button onClick={() => onSave("")} style={{width:"100%",marginTop:8,padding:"8px",borderRadius:10,border:"1px solid #E85D7533",background:"#E85D7511",color:"#E85D75",cursor:"pointer",fontSize:11}}>
+            Disconnect GitHub
+          </button>
+        )}
       </div>
     </div>
   );
@@ -170,52 +150,94 @@ function GitHubSetup({ token, onSave, onClose }) {
 
 // ── GACHA MODAL ────────────────────────────────────────────────────────────
 function GachaModal({ coins, onClose, onPull, collection }) {
-  const [pulling,setPulling]=useState(false),[result,setResult]=useState(null),[shake,setShake]=useState(false);
-  const doPull=()=>{
-    if(coins<50||pulling)return;
-    setPulling(true);setResult(null);setShake(true);
-    setTimeout(()=>setShake(false),600);
-    setTimeout(()=>{ const r=rollGacha(); setResult(r); onPull(r); setPulling(false); },1200);
+  const [pulling, setPulling] = useState(false);
+  const [result,  setResult]  = useState(null);
+  const [shake,   setShake]   = useState(false);
+
+  const doPull = () => {
+    if (coins < 50 || pulling) return;
+    setPulling(true); setResult(null); setShake(true);
+    setTimeout(() => setShake(false), 600);
+    setTimeout(() => {
+      const r = rollGacha();
+      setResult(r); onPull(r); setPulling(false);
+    }, 1200);
   };
-  const owned=id=>collection.some(c=>c.id===id);
-  const rc=result?RARITY_CONFIG[result.rarity]:null;
+
+  const owned = id => collection.some(c => c.id === id);
+  const rc = result ? RARITY_CONFIG[result.rarity] : null;
+
   return (
-    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{background:"#0d0d20",border:"1px solid #2e2e50",borderRadius:24,padding:28,maxWidth:480,width:"100%",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <h2 style={{fontFamily:"'Press Start 2P',monospace",fontSize:12,color:"#FFD740",margin:0,textShadow:"0 0 10px #FFD74077"}}>⚡ GACHA MACHINE</h2>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
+
         <div style={{textAlign:"center",marginBottom:22}}>
-          <div style={{width:140,height:140,borderRadius:24,margin:"0 auto 16px",background:"linear-gradient(135deg,#1a1a35,#0d0d20)",border:"3px solid #FFD74044",display:"flex",alignItems:"center",justifyContent:"center",fontSize:60,boxShadow:"0 0 30px #FFD74022",animation:shake?"shake 0.5s":pulling?"pulse 0.4s infinite":"none"}}>
-            {pulling?"🌀":result?result.emoji:"🎰"}
+          <div style={{
+            width:140, height:140, borderRadius:24, margin:"0 auto 16px",
+            background:"linear-gradient(135deg,#1a1a35,#0d0d20)",
+            border:"3px solid #FFD74044", display:"flex", alignItems:"center",
+            justifyContent:"center", fontSize:60, boxShadow:"0 0 30px #FFD74022",
+            animation: shake ? "shake 0.5s" : pulling ? "pulse 0.4s infinite" : "none",
+          }}>
+            {pulling ? "🌀" : result ? result.emoji : "🎰"}
           </div>
-          {result&&(
+
+          {result && (
             <div style={{animation:"popIn 0.5s cubic-bezier(.34,1.56,.64,1)"}}>
               <div style={{fontSize:16,color:rc.color,fontFamily:"'Press Start 2P',monospace",marginBottom:4,textShadow:`0 0 12px ${rc.glow}`}}>{result.name}</div>
               <div style={{fontSize:11,color:rc.color,marginBottom:6}}>{result.rarity} · {result.type}</div>
               <div style={{fontSize:12,color:"#888",marginBottom:8,fontStyle:"italic"}}>"{result.desc}"</div>
-              {collection.filter(c=>c.id===result.id).length>1
-                ?<div style={{fontSize:9,color:"#E8A838",fontFamily:"'Press Start 2P',monospace"}}>DUPLICATE +{RARITY_CONFIG[result.rarity].pts}🪙</div>
-                :<div style={{fontSize:9,color:"#52C97F",fontFamily:"'Press Start 2P',monospace"}}>NEW CATCH! 🎉</div>}
+              {collection.filter(c => c.id === result.id).length > 1
+                ? <div style={{fontSize:9,color:"#E8A838",fontFamily:"'Press Start 2P',monospace"}}>DUPLICATE +{RARITY_CONFIG[result.rarity].pts}🪙</div>
+                : <div style={{fontSize:9,color:"#52C97F",fontFamily:"'Press Start 2P',monospace"}}>NEW CATCH! 🎉</div>
+              }
             </div>
           )}
-          <button onClick={doPull} disabled={coins<50||pulling} style={{marginTop:16,padding:"12px 32px",borderRadius:12,background:coins>=50?"linear-gradient(135deg,#FFD740,#FF9800)":"#333",border:"none",color:coins>=50?"#000":"#666",fontFamily:"'Press Start 2P',monospace",fontSize:10,cursor:coins>=50?"pointer":"not-allowed",boxShadow:coins>=50?"0 4px 20px #FFD74055":"none"}}>PULL — 50🪙</button>
+
+          <button onClick={doPull} disabled={coins < 50 || pulling} style={{
+            marginTop:16, padding:"12px 32px", borderRadius:12,
+            background: coins >= 50 ? "linear-gradient(135deg,#FFD740,#FF9800)" : "#333",
+            border:"none", color: coins >= 50 ? "#000" : "#666",
+            fontFamily:"'Press Start 2P',monospace", fontSize:10,
+            cursor: coins >= 50 ? "pointer" : "not-allowed",
+            boxShadow: coins >= 50 ? "0 4px 20px #FFD74055" : "none",
+          }}>PULL — 50🪙</button>
           <div style={{fontSize:9,color:"#555",marginTop:8,fontFamily:"'Press Start 2P',monospace"}}>YOU HAVE {coins}🪙</div>
         </div>
+
         <div style={{background:"#ffffff05",borderRadius:12,padding:12,marginBottom:18}}>
           <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:8,color:"#555",marginBottom:8}}>RATES</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {Object.entries(RARITY_CONFIG).map(([r,c])=>(
-              <span key={r} style={{fontSize:10,padding:"3px 9px",borderRadius:20,background:c.bg,color:c.color,border:`1px solid ${c.color}44`}}>{r} {c.weight}%</span>
+            {Object.entries(RARITY_CONFIG).map(([r,c]) => (
+              <span key={r} style={{fontSize:10,padding:"3px 9px",borderRadius:20,background:c.bg,color:c.color,border:`1px solid ${c.color}44`}}>
+                {r} {c.weight}%
+              </span>
             ))}
           </div>
         </div>
+
         <div>
-          <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:8,color:"#555",marginBottom:10}}>{[...new Set(collection.map(c=>c.id))].length}/{CREATURES.length} COLLECTED</div>
+          <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:8,color:"#555",marginBottom:10}}>
+            {[...new Set(collection.map(c => c.id))].length}/{CREATURES.length} COLLECTED
+          </div>
           <div style={{display:"flex",flexWrap:"wrap",gap:7}}>
-            {CREATURES.map(c=>{ const have=owned(c.id); const rc2=RARITY_CONFIG[c.rarity];
-              return <div key={c.id} title={have?`${c.name} (${c.rarity})`:"???"} style={{width:40,height:40,borderRadius:9,border:`1px solid ${have?rc2.color+"55":"#222"}`,background:have?`radial-gradient(circle,${rc2.glow},#0a0a18)`:"#111",display:"flex",alignItems:"center",justifyContent:"center",fontSize:have?18:12,filter:have?"none":"grayscale(1) opacity(0.2)",cursor:"help"}}>{have?c.emoji:"?"}</div>;
+            {CREATURES.map(c => {
+              const have = owned(c.id);
+              const rc2  = RARITY_CONFIG[c.rarity];
+              return (
+                <div key={c.id} title={have ? `${c.name} (${c.rarity})` : "???"}
+                  style={{width:40,height:40,borderRadius:9,border:`1px solid ${have ? rc2.color+"55" : "#222"}`,
+                    background: have ? `radial-gradient(circle,${rc2.glow},#0a0a18)` : "#111",
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    fontSize: have ? 18 : 12, filter: have ? "none" : "grayscale(1) opacity(0.2)",cursor:"help"}}>
+                  {have ? c.emoji : "?"}
+                </div>
+              );
             })}
           </div>
         </div>
@@ -225,118 +247,101 @@ function GachaModal({ coins, onClose, onPull, collection }) {
 }
 
 // ── TASK MODAL ─────────────────────────────────────────────────────────────
-function TaskModal({ form, setForm, onSave, onClose, isEdit, repos, loadingRepos, gcalConnected }) {
-  const inp={background:"#0f0f1e",border:"1px solid #2e2e50",borderRadius:9,padding:"10px 13px",color:"#e8e8f0",fontSize:13,outline:"none",width:"100%",boxSizing:"border-box",fontFamily:"inherit"};
+function TaskModal({ form, setForm, onSave, onClose, isEdit, repos, loadingRepos }) {
+  const inp = {
+    background:"#0f0f1e", border:"1px solid #2e2e50", borderRadius:9,
+    padding:"10px 13px", color:"#e8e8f0", fontSize:13, outline:"none",
+    width:"100%", boxSizing:"border-box", fontFamily:"inherit",
+  };
   return (
-    <div style={{position:"fixed",inset:0,background:"#000b",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:20}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div style={{position:"fixed",inset:0,background:"#000b",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:20}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{background:"#13132a",border:"1px solid #2e2e50",borderRadius:18,padding:26,width:"100%",maxWidth:500,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <h2 style={{fontFamily:"'Press Start 2P',monospace",fontSize:10,color:"#e8e8f0",margin:0}}>{isEdit?"EDIT QUEST":"NEW QUEST"}</h2>
+          <h2 style={{fontFamily:"'Press Start 2P',monospace",fontSize:10,color:"#e8e8f0",margin:0}}>
+            {isEdit ? "EDIT QUEST" : "NEW QUEST"}
+          </h2>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
+
         <div style={{display:"flex",flexDirection:"column",gap:11}}>
-          <input style={inp} placeholder="Quest title..." value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+          <input style={inp} placeholder="Quest title..." value={form.title}
+            onChange={e => setForm({...form, title:e.target.value})} />
+
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <div>
               <label style={{fontSize:8,color:"#555",fontFamily:"'Press Start 2P',monospace"}}>CATEGORY</label>
-              <select style={{...inp,marginTop:4}} value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>
-                {CATEGORIES.map(c=><option key={c.name}>{c.icon} {c.name}</option>)}
+              <select style={{...inp,marginTop:4}} value={form.category}
+                onChange={e => setForm({...form, category:e.target.value})}>
+                {CATEGORIES.map(c => <option key={c.name}>{c.icon} {c.name}</option>)}
               </select>
             </div>
             <div>
               <label style={{fontSize:8,color:"#555",fontFamily:"'Press Start 2P',monospace"}}>PRIORITY</label>
-              <select style={{...inp,marginTop:4}} value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})}>
-                {PRIORITIES.map(p=><option key={p.name}>{p.name}</option>)}
+              <select style={{...inp,marginTop:4}} value={form.priority}
+                onChange={e => setForm({...form, priority:e.target.value})}>
+                {PRIORITIES.map(p => <option key={p.name}>{p.name}</option>)}
               </select>
             </div>
             <div>
               <label style={{fontSize:8,color:"#555",fontFamily:"'Press Start 2P',monospace"}}>DUE DATE</label>
-              <input type="date" style={{...inp,marginTop:4}} value={form.due} onChange={e=>setForm({...form,due:e.target.value})}/>
+              <input type="date" style={{...inp,marginTop:4}} value={form.due}
+                onChange={e => setForm({...form, due:e.target.value})} />
             </div>
             <div>
               <label style={{fontSize:8,color:"#555",fontFamily:"'Press Start 2P',monospace"}}>TIME</label>
-              <input type="time" style={{...inp,marginTop:4}} value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/>
+              <input type="time" style={{...inp,marginTop:4}} value={form.time}
+                onChange={e => setForm({...form, time:e.target.value})} />
             </div>
           </div>
+
           <div>
             <label style={{fontSize:8,color:"#555",fontFamily:"'Press Start 2P',monospace"}}>RECURRENCE</label>
             <div style={{display:"flex",gap:5,marginTop:5}}>
-              {RECURRENCE.map(r=>(
-                <button key={r} onClick={()=>setForm({...form,recurring:r})} style={{flex:1,padding:"7px 0",borderRadius:8,cursor:"pointer",fontSize:9,border:`1px solid ${form.recurring===r?"#7C4DFF":"#2e2e50"}`,background:form.recurring===r?"#7C4DFF22":"#ffffff05",color:form.recurring===r?"#a78bfa":"#555",fontFamily:"'Press Start 2P',monospace"}}>{r}</button>
+              {RECURRENCE.map(r => (
+                <button key={r} onClick={() => setForm({...form, recurring:r})} style={{
+                  flex:1, padding:"7px 0", borderRadius:8, cursor:"pointer", fontSize:9,
+                  border:`1px solid ${form.recurring === r ? "#7C4DFF" : "#2e2e50"}`,
+                  background: form.recurring === r ? "#7C4DFF22" : "#ffffff05",
+                  color: form.recurring === r ? "#a78bfa" : "#555",
+                  fontFamily:"'Press Start 2P',monospace",
+                }}>{r}</button>
               ))}
             </div>
           </div>
+
           <div>
             <label style={{fontSize:8,color:"#238636",fontFamily:"'Press Start 2P',monospace"}}>🐙 LINK GITHUB REPO</label>
             {loadingRepos
-              ?<div style={{...inp,marginTop:4,color:"#555",fontSize:12}}>Loading repos…</div>
-              :repos.length>0
-                ?<select style={{...inp,marginTop:4}} value={form.repo||""} onChange={e=>setForm({...form,repo:e.target.value||null})}>
-                  <option value="">— No repo —</option>
-                  {repos.map(r=><option key={r.full_name} value={r.full_name}>{r.full_name}{r.private?" 🔒":""}</option>)}
-                </select>
-                :<div style={{...inp,marginTop:4,color:"#555",fontSize:11}}>Connect GitHub in settings to link repos</div>
+              ? <div style={{...inp,marginTop:4,color:"#555",fontSize:12}}>Loading repos…</div>
+              : repos.length > 0
+                ? <select style={{...inp,marginTop:4}} value={form.repo || ""}
+                    onChange={e => setForm({...form, repo:e.target.value || null})}>
+                    <option value="">— No repo —</option>
+                    {repos.map(r => (
+                      <option key={r.full_name} value={r.full_name}>
+                        {r.full_name}{r.private ? " 🔒" : ""}
+                      </option>
+                    ))}
+                  </select>
+                : <div style={{...inp,marginTop:4,color:"#555",fontSize:11}}>
+                    Connect GitHub in settings to link repos
+                  </div>
             }
           </div>
 
-          {/* Google Calendar toggle */}
-          {gcalConnected && (
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"#4285F418",border:"1px solid #4285F433",borderRadius:10,padding:"10px 14px"}}>
-              <div>
-                <div style={{fontSize:11,color:"#ccc",fontWeight:600}}>📅 Add to Google Calendar</div>
-                <div style={{fontSize:10,color:"#666",marginTop:2}}>Creates an event when task is saved</div>
-              </div>
-              <button onClick={()=>setForm({...form,addToGcal:!form.addToGcal})} style={{width:44,height:24,borderRadius:99,border:"none",background:form.addToGcal?"#4285F4":"#333",cursor:"pointer",position:"relative",transition:"background 0.2s",flexShrink:0}}>
-                <div style={{width:18,height:18,borderRadius:"50%",background:"#fff",position:"absolute",top:3,transition:"left 0.2s",left:form.addToGcal?23:3}}/>
-              </button>
-            </div>
-          )}
-
           <div>
             <label style={{fontSize:8,color:"#555",fontFamily:"'Press Start 2P',monospace"}}>TAGS</label>
-            <input style={{...inp,marginTop:4}} placeholder="urgent, client..." value={form.tags} onChange={e=>setForm({...form,tags:e.target.value})}/>
+            <input style={{...inp,marginTop:4}} placeholder="urgent, client..."
+              value={form.tags} onChange={e => setForm({...form, tags:e.target.value})} />
           </div>
+
           <div style={{display:"flex",gap:10,marginTop:4}}>
             <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:10,border:"1px solid #2e2e50",background:"none",color:"#777",cursor:"pointer",fontSize:12}}>Cancel</button>
-            <button onClick={onSave} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#7C4DFF,#4A90D9)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>{isEdit?"SAVE CHANGES":"ADD QUEST"}</button>
+            <button onClick={onSave} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#7C4DFF,#4A90D9)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>
+              {isEdit ? "SAVE CHANGES" : "ADD QUEST"}
+            </button>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── CALENDAR EVENTS PANEL ──────────────────────────────────────────────────
-function CalendarPanel({ events, loading, onClose, onImport }) {
-  return (
-    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:20}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#0d0d20",border:"1px solid #2e2e50",borderRadius:20,padding:26,maxWidth:500,width:"100%",maxHeight:"85vh",display:"flex",flexDirection:"column"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <h2 style={{fontFamily:"'Press Start 2P',monospace",fontSize:10,color:"#4285F4",margin:0}}>📅 UPCOMING EVENTS</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer"}}>✕</button>
-        </div>
-        <p style={{fontSize:11,color:"#555",marginBottom:14}}>Next 7 days from your Google Calendar. Click an event to import it as a quest.</p>
-        <div style={{overflowY:"auto",flex:1}}>
-          {loading&&<div style={{textAlign:"center",padding:"40px 0",color:"#555",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>LOADING EVENTS…</div>}
-          {!loading&&events.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"#555",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>NO EVENTS FOUND</div>}
-          {!loading&&events.map((ev,i)=>{
-            const start=ev.start?.dateTime||ev.start?.date||"";
-            const date=start?new Date(start):null;
-            const dateStr=date?date.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}):"";
-            const timeStr=ev.start?.dateTime?date.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}):"All day";
-            return (
-              <div key={ev.id||i} onClick={()=>onImport(ev)} style={{background:"#ffffff05",border:"1px solid #4285F422",borderRadius:10,padding:"12px 14px",marginBottom:8,cursor:"pointer",transition:"all 0.15s"}}
-                onMouseEnter={e=>e.currentTarget.style.background="#4285F411"}
-                onMouseLeave={e=>e.currentTarget.style.background="#ffffff05"}>
-                <div style={{fontSize:13,color:"#e8e8f0",fontWeight:600,marginBottom:4}}>{ev.summary||"(No title)"}</div>
-                <div style={{display:"flex",gap:12,fontSize:11,color:"#666"}}>
-                  <span>📅 {dateStr}</span>
-                  <span>🕐 {timeStr}</span>
-                  {ev.location&&<span>📍 {ev.location.slice(0,30)}</span>}
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
     </div>
@@ -345,32 +350,44 @@ function CalendarPanel({ events, loading, onClose, onImport }) {
 
 // ── DEPLOY GUIDE ───────────────────────────────────────────────────────────
 function DeployGuide({ onClose }) {
-  const [step,setStep]=useState(0);
-  const steps=[
-    {title:"1. CREATE GITHUB REPO",color:"#4A90D9",content:<><p>Go to <a href="https://github.com/new" target="_blank" style={{color:"#4A90D9"}}>github.com/new</a> and create a <strong>private repo</strong> named <code>quest-log</code>.</p></>},
-    {title:"2. EXPORT & PUSH CODE",color:"#7C4DFF",content:<><p>Save the app as <code>src/App.jsx</code> in a Vite React project, then:</p><pre style={{background:"#0a0a18",padding:12,borderRadius:8,fontSize:11,color:"#52C97F",overflowX:"auto"}}>{`npm create vite@latest . -- --template react\nnpm install\nnpm install gh-pages --save-dev\ngit init && git add .\ngit commit -m "init"\ngit remote add origin https://github.com/YOU/quest-log.git\ngit push -u origin main\nnpm run deploy`}</pre></>},
-    {title:"3. ENABLE GITHUB PAGES",color:"#52C97F",content:<><p>Repo → <strong>Settings → Pages</strong> → Source: <strong>gh-pages branch</strong>. Live at <code style={{color:"#52C97F"}}>https://YOUR-NAME.github.io/quest-log</code></p></>},
-    {title:"4. LOCK WITH CLOUDFLARE",color:"#FF9800",content:<><p><a href="https://dash.cloudflare.com" target="_blank" style={{color:"#FF9800"}}>Cloudflare Zero Trust</a> → Access → Applications → Add Self-hosted app → set policy to your email only. Done — only you can log in.</p></>},
-    {title:"5. GOOGLE OAUTH ORIGINS",color:"#4285F4",content:<><p>In <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style={{color:"#4285F4"}}>Google Cloud Console → Credentials</a>, add your GitHub Pages URL to <strong>Authorized JavaScript Origins</strong> so the calendar OAuth works on the deployed site.</p></>},
+  const [step, setStep] = useState(0);
+  const steps = [
+    { title:"1. CREATE GITHUB REPO", color:"#4A90D9", content:
+      <><p>Go to <a href="https://github.com/new" target="_blank" style={{color:"#4A90D9"}}>github.com/new</a> and create a <strong>private repo</strong> named <code>quest-log</code>.</p></> },
+    { title:"2. EXPORT & PUSH CODE", color:"#7C4DFF", content:
+      <><p>Save the app as <code>src/App.jsx</code> in a Vite React project, then:</p>
+      <pre style={{background:"#0a0a18",padding:12,borderRadius:8,fontSize:11,color:"#52C97F",overflowX:"auto"}}>{`npm create vite@latest . -- --template react\nnpm install\nnpm install gh-pages --save-dev\ngit init && git add .\ngit commit -m "init"\ngit remote add origin https://github.com/YOU/quest-log.git\ngit push -u origin main\nnpm run deploy`}</pre></> },
+    { title:"3. ENABLE GITHUB PAGES", color:"#52C97F", content:
+      <><p>Repo → <strong>Settings → Pages</strong> → Source: <strong>gh-pages branch</strong>. Live at <code style={{color:"#52C97F"}}>https://YOUR-NAME.github.io/quest-log</code></p></> },
+    { title:"4. GOOGLE CALENDAR", color:"#4285F4", content:
+      <><p>No setup needed! Every task with a due date has a <strong style={{color:"#4285F4"}}>📅 Add to GCal</strong> button. Click it and Google Calendar opens with everything pre-filled. Just hit Save in Google Calendar.</p></> },
   ];
-  const s=steps[step];
+  const s = steps[step];
   return (
-    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:400,padding:20}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div style={{position:"fixed",inset:0,background:"#000c",display:"flex",alignItems:"center",justifyContent:"center",zIndex:400,padding:20}}
+      onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{background:"#0d0d20",border:"1px solid #2e2e50",borderRadius:20,padding:28,maxWidth:520,width:"100%"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
           <h2 style={{fontFamily:"'Press Start 2P',monospace",fontSize:10,color:"#FFD740",margin:0}}>🚀 DEPLOY GUIDE</h2>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#555",fontSize:20,cursor:"pointer"}}>✕</button>
         </div>
         <div style={{display:"flex",gap:6,marginBottom:20}}>
-          {steps.map((st,i)=><div key={i} onClick={()=>setStep(i)} style={{flex:1,height:4,borderRadius:99,background:i===step?st.color:i<step?"#333":"#1a1a30",cursor:"pointer",transition:"background 0.3s"}}/>)}
+          {steps.map((st,i) => (
+            <div key={i} onClick={() => setStep(i)} style={{
+              flex:1, height:4, borderRadius:99, cursor:"pointer", transition:"background 0.3s",
+              background: i === step ? st.color : i < step ? "#333" : "#1a1a30",
+            }} />
+          ))}
         </div>
         <div style={{fontFamily:"'Press Start 2P',monospace",fontSize:9,color:s.color,marginBottom:12}}>{s.title}</div>
         <div style={{fontSize:13,color:"#aaa",lineHeight:1.9,marginBottom:20}}>{s.content}</div>
         <div style={{display:"flex",gap:10}}>
-          <button onClick={()=>setStep(i=>Math.max(0,i-1))} disabled={step===0} style={{flex:1,padding:"10px",borderRadius:10,border:"1px solid #2e2e50",background:"none",color:step===0?"#333":"#777",cursor:step===0?"not-allowed":"pointer",fontSize:12}}>← Back</button>
-          {step<steps.length-1
-            ?<button onClick={()=>setStep(i=>i+1)} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:`linear-gradient(135deg,${s.color},${steps[step+1].color})`,color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>NEXT →</button>
-            :<button onClick={onClose} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C97F,#4A90D9)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>DONE ✓</button>}
+          <button onClick={() => setStep(i => Math.max(0,i-1))} disabled={step===0}
+            style={{flex:1,padding:"10px",borderRadius:10,border:"1px solid #2e2e50",background:"none",color:step===0?"#333":"#777",cursor:step===0?"not-allowed":"pointer",fontSize:12}}>← Back</button>
+          {step < steps.length - 1
+            ? <button onClick={() => setStep(i => i+1)} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:`linear-gradient(135deg,${s.color},${steps[step+1].color})`,color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>NEXT →</button>
+            : <button onClick={onClose} style={{flex:2,padding:"10px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#52C97F,#4A90D9)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:9}}>DONE ✓</button>
+          }
         </div>
       </div>
     </div>
@@ -379,308 +396,309 @@ function DeployGuide({ onClose }) {
 
 // ── MAIN APP ───────────────────────────────────────────────────────────────
 export default function App() {
-  const [tasks,       setTasks]       = useState(()=>load("ql_tasks",SAMPLE_TASKS));
-  const [xp,          setXp]          = useState(()=>load("ql_xp",0));
-  const [level,       setLevel]       = useState(()=>load("ql_level",1));
-  const [coins,       setCoins]       = useState(()=>load("ql_coins",100));
-  const [collection,  setCollection]  = useState(()=>load("ql_col",[]));
-  const [streak,      setStreak]      = useState(()=>load("ql_streak",0));
-  const [ghToken,     setGhToken]     = useState(()=>load("ql_ghtoken",""));
+  const [tasks,       setTasks]       = useState(() => load("ql_tasks", SAMPLE_TASKS));
+  const [xp,          setXp]          = useState(() => load("ql_xp", 0));
+  const [level,       setLevel]       = useState(() => load("ql_level", 1));
+  const [coins,       setCoins]       = useState(() => load("ql_coins", 100));
+  const [collection,  setCollection]  = useState(() => load("ql_col", []));
+  const [streak,      setStreak]      = useState(() => load("ql_streak", 0));
+  const [ghToken,     setGhToken]     = useState(() => load("ql_ghtoken", ""));
   const [ghRepos,     setGhRepos]     = useState([]);
-  const [ghUser,      setGhUser]      = useState(()=>load("ql_ghuser",null));
+  const [ghUser,      setGhUser]      = useState(() => load("ql_ghuser", null));
   const [loadingRepos,setLoadingRepos]= useState(false);
-  const [gcalClientId,setGcalClientId]= useState(()=>load("ql_gcal_cid",""));
-  const [gcalToken,   setGcalToken]   = useState(()=>load("ql_gcal_tok",""));
-  const [gcalUser,    setGcalUser]    = useState(()=>load("ql_gcal_usr",""));
-  const [calEvents,   setCalEvents]   = useState([]);
-  const [loadingCal,  setLoadingCal]  = useState(false);
   const [floats,      setFloats]      = useState([]);
   const [tab,         setTab]         = useState("quests");
   const [showGacha,   setShowGacha]   = useState(false);
   const [showModal,   setShowModal]   = useState(false);
   const [showGhSetup, setShowGhSetup] = useState(false);
-  const [showGcal,    setShowGcal]    = useState(false);
-  const [showCalPanel,setShowCalPanel]= useState(false);
   const [showDeploy,  setShowDeploy]  = useState(false);
-  const [form,        setForm]        = useState({title:"",category:"Work",priority:"Medium",due:"",time:"",recurring:"None",tags:"",repo:null,addToGcal:false});
+  const [form,        setForm]        = useState({title:"",category:"Work",priority:"Medium",due:"",time:"",recurring:"None",tags:"",repo:null});
   const [editId,      setEditId]      = useState(null);
   const [catFilter,   setCatFilter]   = useState("All");
   const [priFilter,   setPriFilter]   = useState("All");
   const [search,      setSearch]      = useState("");
   const [notification,setNotification]= useState(null);
 
-  useEffect(()=>{ save("ql_tasks",tasks); },[tasks]);
-  useEffect(()=>{ save("ql_xp",xp); save("ql_level",level); },[xp,level]);
-  useEffect(()=>{ save("ql_coins",coins); },[coins]);
-  useEffect(()=>{ save("ql_col",collection); },[collection]);
-  useEffect(()=>{ save("ql_streak",streak); },[streak]);
-  useEffect(()=>{ save("ql_gcal_cid",gcalClientId); save("ql_gcal_tok",gcalToken); save("ql_gcal_usr",gcalUser); },[gcalClientId,gcalToken,gcalUser]);
+  useEffect(() => { save("ql_tasks",    tasks);  }, [tasks]);
+  useEffect(() => { save("ql_xp",       xp);
+                    save("ql_level",    level);  }, [xp, level]);
+  useEffect(() => { save("ql_coins",    coins);  }, [coins]);
+  useEffect(() => { save("ql_col",      collection); }, [collection]);
+  useEffect(() => { save("ql_streak",   streak); }, [streak]);
+  useEffect(() => { save("ql_ghtoken",  ghToken);
+                    save("ql_ghuser",   ghUser); }, [ghToken, ghUser]);
 
-  const showNotif=(msg,color="#52C97F")=>{ setNotification({msg,color}); setTimeout(()=>setNotification(null),3000); };
+  const showNotif = (msg, color="#52C97F") => {
+    setNotification({msg, color});
+    setTimeout(() => setNotification(null), 3000);
+  };
 
-  // Load Google Identity Services script
-  useEffect(()=>{
-    if(!gcalClientId) return;
-    if(window.google) return;
-    const s=document.createElement("script");
-    s.src="https://accounts.google.com/gsi/client";
-    s.async=true; s.defer=true;
-    document.head.appendChild(s);
-  },[gcalClientId]);
-
-  // GitHub repos
-  useEffect(()=>{
-    if(!ghToken){ setGhRepos([]); setGhUser(null); return; }
+  // GitHub repos fetch
+  useEffect(() => {
+    if (!ghToken) { setGhRepos([]); setGhUser(null); return; }
     setLoadingRepos(true);
     Promise.all([
-      fetch("https://api.github.com/user",{headers:{Authorization:`token ${ghToken}`}}).then(r=>r.json()),
-      fetch("https://api.github.com/user/repos?per_page=100&sort=updated",{headers:{Authorization:`token ${ghToken}`}}).then(r=>r.json()),
-    ]).then(([user,repos])=>{
-      if(user.login){ setGhUser(user); setGhRepos(Array.isArray(repos)?repos:[]); }
-      else { setGhUser(null); setGhRepos([]); }
+      fetch("https://api.github.com/user",
+        {headers:{Authorization:`token ${ghToken}`}}).then(r => r.json()),
+      fetch("https://api.github.com/user/repos?per_page=100&sort=updated",
+        {headers:{Authorization:`token ${ghToken}`}}).then(r => r.json()),
+    ]).then(([user, repos]) => {
+      if (user.login) { setGhUser(user); setGhRepos(Array.isArray(repos) ? repos : []); }
+      else            { setGhUser(null); setGhRepos([]); }
       setLoadingRepos(false);
-    }).catch(()=>setLoadingRepos(false));
-  },[ghToken]);
+    }).catch(() => setLoadingRepos(false));
+  }, [ghToken]);
 
-  // ── GOOGLE OAUTH FLOW ────────────────────────────────────────────────────
-  const connectGcal = useCallback(() => {
-    if(!gcalClientId){ showNotif("Enter your OAuth Client ID first","#E85D75"); setShowGcal(true); return; }
-    const client = window.google?.accounts?.oauth2?.initTokenClient({
-      client_id: gcalClientId,
-      scope: GCAL_SCOPES,
-      callback: async (resp) => {
-        if(resp.error){ showNotif("Google auth failed: "+resp.error,"#E85D75"); return; }
-        setGcalToken(resp.access_token);
-        // Fetch user info
-        try {
-          const ui = await fetch("https://www.googleapis.com/oauth2/v2/userinfo",{headers:{Authorization:`Bearer ${resp.access_token}`}}).then(r=>r.json());
-          setGcalUser(ui.email||"Connected");
-          showNotif("Google Calendar connected! 📅");
-        } catch{ setGcalUser("Connected"); }
-      },
+  const addFloat = (text, color, e) => {
+    const id = Date.now() + Math.random();
+    const x  = e?.clientX ?? window.innerWidth  / 2;
+    const y  = e?.clientY ?? window.innerHeight / 2;
+    setFloats(f => [...f, {id, text, color, x, y}]);
+  };
+
+  const awardXP = (amount, coinAmt, e) => {
+    addFloat(`+${amount} XP`, "#FFD740", e);
+    if (coinAmt > 0) setTimeout(() => addFloat(`+${coinAmt}🪙`, "#FF9800", e), 280);
+    setXp(prev => {
+      let nx = prev + amount, nl = level;
+      while (nx >= nl * 100) { nx -= nl * 100; nl++; addFloat("LEVEL UP! 🎉", "#7C4DFF", e); }
+      setLevel(nl);
+      return nx;
     });
-    client?.requestAccessToken();
-  },[gcalClientId]);
-
-  // ── FETCH CALENDAR EVENTS ────────────────────────────────────────────────
-  const fetchCalEvents = useCallback(async () => {
-    if(!gcalToken){ showNotif("Connect Google Calendar first","#E85D75"); return; }
-    setLoadingCal(true); setShowCalPanel(true);
-    try {
-      const now   = new Date().toISOString();
-      const week  = new Date(Date.now()+7*24*60*60*1000).toISOString();
-      const url   = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${now}&timeMax=${week}&singleEvents=true&orderBy=startTime&maxResults=30`;
-      const data  = await fetch(url,{headers:{Authorization:`Bearer ${gcalToken}`}}).then(r=>r.json());
-      if(data.error){ showNotif("Calendar error: "+data.error.message,"#E85D75"); setLoadingCal(false); return; }
-      setCalEvents(data.items||[]);
-    } catch(e){ showNotif("Failed to fetch events","#E85D75"); }
-    setLoadingCal(false);
-  },[gcalToken]);
-
-  // ── PUSH TASK TO CALENDAR ────────────────────────────────────────────────
-  const pushToCalendar = useCallback(async (task) => {
-    if(!gcalToken||!task.due) return;
-    try {
-      const start = task.time ? `${task.due}T${task.time}:00` : task.due;
-      const isDateTime = !!task.time;
-      const end = task.time
-        ? new Date(new Date(`${task.due}T${task.time}:00`).getTime()+60*60*1000).toISOString()
-        : task.due;
-      const event = {
-        summary: task.title,
-        description: `Quest Log task\nCategory: ${task.category}\nPriority: ${task.priority}${task.repo?`\nRepo: github.com/${task.repo}`:""}`,
-        ...(isDateTime
-          ? {start:{dateTime:start,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone}, end:{dateTime:end,timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone}}
-          : {start:{date:task.due},end:{date:task.due}}
-        ),
-      };
-      const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events",{
-        method:"POST", headers:{Authorization:`Bearer ${gcalToken}`,"Content-Type":"application/json"},
-        body:JSON.stringify(event),
-      }).then(r=>r.json());
-      if(res.id){
-        setTasks(ts=>ts.map(t=>t.id===task.id?{...t,gcalId:res.id,gcalLink:res.htmlLink}:t));
-        showNotif("Added to Google Calendar! 📅");
-      }
-    } catch{ showNotif("Failed to push to calendar","#E85D75"); }
-  },[gcalToken]);
-
-  // ── IMPORT CAL EVENT AS TASK ─────────────────────────────────────────────
-  const importCalEvent = (ev) => {
-    const start=ev.start?.dateTime||ev.start?.date||"";
-    const date=start?new Date(start):null;
-    const due=date?date.toISOString().split("T")[0]:"";
-    const time=ev.start?.dateTime?date.toTimeString().slice(0,5):"";
-    const newTask={id:Date.now(),title:ev.summary||"Imported event",category:"Work",priority:"Medium",due,time,recurring:"None",done:false,tags:["gcal"],repo:null,gcalId:ev.id,gcalLink:ev.htmlLink};
-    setTasks(ts=>[...ts,newTask]);
-    showNotif("Event imported as quest! ⚔");
-    setShowCalPanel(false);
+    setCoins(c => c + coinAmt);
   };
 
-  const addFloat=(text,color,e)=>{
-    const id=Date.now()+Math.random(), x=e?.clientX??window.innerWidth/2, y=e?.clientY??window.innerHeight/2;
-    setFloats(f=>[...f,{id,text,color,x,y}]);
-  };
-
-  const awardXP=(amount,coinAmt,e)=>{
-    addFloat(`+${amount} XP`,"#FFD740",e);
-    if(coinAmt>0) setTimeout(()=>addFloat(`+${coinAmt}🪙`,"#FF9800",e),280);
-    setXp(prev=>{
-      let nx=prev+amount, nl=level;
-      while(nx>=nl*100){ nx-=nl*100; nl++; addFloat("LEVEL UP! 🎉","#7C4DFF",e); }
-      setLevel(nl); return nx;
-    });
-    setCoins(c=>c+coinAmt);
-  };
-
-  const toggleDone=(id,e)=>{
-    const task=tasks.find(t=>t.id===id); if(!task)return;
-    const wasDone=task.done;
-    setTasks(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));
-    if(!wasDone){
-      const pri=PRIORITIES.find(p=>p.name===task.priority)||PRIORITIES[1];
-      awardXP(pri.pts+(task.due===TODAY?10:0), Math.floor((pri.pts+10)/3), e);
-      setStreak(s=>s+1);
-    } else { setStreak(s=>Math.max(0,s-1)); }
-  };
-
-  const saveTask=async()=>{
-    if(!form.title.trim())return;
-    const parsed={...form,tags:form.tags.split(",").map(t=>t.trim()).filter(Boolean)};
-    let savedTask;
-    if(editId!==null){
-      setTasks(ts=>ts.map(t=>t.id===editId?{...t,...parsed}:t));
-      savedTask={id:editId,...parsed};
+  const toggleDone = (id, e) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    const wasDone = task.done;
+    setTasks(ts => ts.map(t => t.id === id ? {...t, done:!t.done} : t));
+    if (!wasDone) {
+      const pri   = PRIORITIES.find(p => p.name === task.priority) || PRIORITIES[1];
+      const bonus = task.due === TODAY ? 10 : 0;
+      awardXP(pri.pts + bonus, Math.floor((pri.pts + bonus) / 3), e);
+      setStreak(s => s + 1);
     } else {
-      savedTask={...parsed,id:Date.now(),done:false,gcalId:null};
-      setTasks(ts=>[...ts,savedTask]);
-    }
-    setShowModal(false); setEditId(null);
-    if(form.addToGcal && gcalToken && savedTask.due) {
-      await pushToCalendar(savedTask);
+      setStreak(s => Math.max(0, s - 1));
     }
   };
 
-  const openEdit=task=>{
-    setForm({title:task.title,category:task.category,priority:task.priority,due:task.due||"",time:task.time||"",recurring:task.recurring||"None",tags:(task.tags||[]).join(","),repo:task.repo||null,addToGcal:false});
-    setEditId(task.id); setShowModal(true);
+  const saveTask = () => {
+    if (!form.title.trim()) return;
+    const parsed = {...form, tags: form.tags.split(",").map(t => t.trim()).filter(Boolean)};
+    if (editId !== null) {
+      setTasks(ts => ts.map(t => t.id === editId ? {...t, ...parsed} : t));
+    } else {
+      setTasks(ts => [...ts, {...parsed, id:Date.now(), done:false}]);
+    }
+    setShowModal(false);
+    setEditId(null);
   };
 
-  const onGachaPull=creature=>{
-    setCoins(c=>c-50);
-    if(collection.some(c=>c.id===creature.id)) setCoins(c=>c+RARITY_CONFIG[creature.rarity].pts);
-    setCollection(col=>[...col,creature]);
+  const openEdit = task => {
+    setForm({
+      title:     task.title,
+      category:  task.category,
+      priority:  task.priority,
+      due:       task.due    || "",
+      time:      task.time   || "",
+      recurring: task.recurring || "None",
+      tags:      (task.tags || []).join(","),
+      repo:      task.repo   || null,
+    });
+    setEditId(task.id);
+    setShowModal(true);
   };
 
-  const saveGcalSetup=(cid)=>{ setGcalClientId(cid); setShowGcal(false); if(cid) setTimeout(connectGcal,500); };
-  const disconnectGcal=()=>{ setGcalToken(""); setGcalUser(""); setGcalClientId(""); setShowGcal(false); showNotif("Google Calendar disconnected"); };
+  const onGachaPull = creature => {
+    setCoins(c => c - 50);
+    const isDupe = collection.some(c => c.id === creature.id);
+    if (isDupe) setCoins(c => c + RARITY_CONFIG[creature.rarity].pts);
+    setCollection(col => [...col, creature]);
+  };
 
-  const filtered=tasks.filter(t=>{
-    const s=search.toLowerCase();
-    return (catFilter==="All"||t.category===catFilter)&&(priFilter==="All"||t.priority===priFilter)&&
-      (t.title.toLowerCase().includes(s)||(t.tags||[]).some(g=>g.includes(s))||(t.repo||"").toLowerCase().includes(s));
+  const filtered = tasks.filter(t => {
+    const s = search.toLowerCase();
+    return (
+      (catFilter === "All" || t.category === catFilter) &&
+      (priFilter === "All" || t.priority === priFilter) &&
+      (t.title.toLowerCase().includes(s) ||
+       (t.tags  || []).some(g => g.includes(s)) ||
+       (t.repo  || "").toLowerCase().includes(s))
+    );
   });
 
-  const overdue  =filtered.filter(t=>!t.done&&t.due&&t.due<TODAY);
-  const todayList=filtered.filter(t=>!t.done&&t.due===TODAY);
-  const upcoming =filtered.filter(t=>!t.done&&(!t.due||t.due>TODAY));
-  const done     =filtered.filter(t=>t.done);
-  const xpNeeded =level*100;
-  const pct      =Math.min((xp/xpNeeded)*100,100);
-  const uniqueOwned=[...new Set(collection.map(c=>c.id))].length;
-  const gcalConnected=!!gcalToken;
+  const overdue   = filtered.filter(t => !t.done && t.due && t.due < TODAY);
+  const todayList = filtered.filter(t => !t.done && t.due === TODAY);
+  const upcoming  = filtered.filter(t => !t.done && (!t.due || t.due > TODAY));
+  const done      = filtered.filter(t =>  t.done);
+  const xpNeeded  = level * 100;
+  const pct       = Math.min((xp / xpNeeded) * 100, 100);
+  const uniqueOwned = [...new Set(collection.map(c => c.id))].length;
 
-  const TaskCard=({task})=>{
-    const cat=CATEGORIES.find(c=>c.name===task.category)||CATEGORIES[0];
-    const pri=PRIORITIES.find(p=>p.name===task.priority)||PRIORITIES[1];
-    const isOverdue=!task.done&&task.due&&task.due<TODAY;
-    const repoShort=task.repo?task.repo.split("/")[1]:null;
+  // ── TASK CARD ────────────────────────────────────────────────────────────
+  const TaskCard = ({ task }) => {
+    const cat       = CATEGORIES.find(c => c.name === task.category) || CATEGORIES[0];
+    const pri       = PRIORITIES.find(p => p.name === task.priority) || PRIORITIES[1];
+    const isOverdue = !task.done && task.due && task.due < TODAY;
+    const repoShort = task.repo ? task.repo.split("/")[1] : null;
+    const gcalLink  = makeGCalLink(task);
+
     return (
-      <div style={{background:task.done?"#12122a":"#1c1c35",border:`1px solid ${isOverdue?"#E85D7533":task.done?"#1a1a30":cat.color+"33"}`,borderLeft:`3px solid ${task.done?"#2a2a45":isOverdue?"#E85D75":cat.color}`,borderRadius:12,padding:"12px 14px",marginBottom:7,opacity:task.done?0.5:1,transition:"all 0.2s"}}>
+      <div style={{
+        background:   task.done ? "#12122a" : "#1c1c35",
+        border:      `1px solid ${isOverdue ? "#E85D7533" : task.done ? "#1a1a30" : cat.color+"33"}`,
+        borderLeft:  `3px solid ${task.done ? "#2a2a45" : isOverdue ? "#E85D75" : cat.color}`,
+        borderRadius: 12, padding:"12px 14px", marginBottom:7,
+        opacity: task.done ? 0.5 : 1, transition:"all 0.2s",
+      }}>
         <div style={{display:"flex",alignItems:"flex-start",gap:11}}>
-          <button onClick={e=>toggleDone(task.id,e)} style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${task.done?cat.color:"#444"}`,background:task.done?cat.color:"transparent",flexShrink:0,marginTop:2,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:11,fontWeight:900,transition:"all 0.2s"}}>
-            {task.done?"✓":""}
-          </button>
+          <button onClick={e => toggleDone(task.id, e)} style={{
+            width:22, height:22, borderRadius:"50%",
+            border:`2px solid ${task.done ? cat.color : "#444"}`,
+            background: task.done ? cat.color : "transparent",
+            flexShrink:0, marginTop:2, cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            color:"#fff", fontSize:11, fontWeight:900, transition:"all 0.2s",
+          }}>{task.done ? "✓" : ""}</button>
+
           <div style={{flex:1,minWidth:0}}>
+            {/* Title row */}
             <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:6,marginBottom:5}}>
-              <span style={{fontSize:14,fontWeight:600,color:task.done?"#555":"#e8e8f0",textDecoration:task.done?"line-through":"none"}}>{task.title}</span>
-              <span style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:pri.bg,color:pri.color,fontWeight:700,border:`1px solid ${pri.color}44`}}>{task.priority}</span>
-              <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:"#FFD74018",color:"#FFD740",border:"1px solid #FFD74033"}}>+{pri.pts}{task.due===TODAY?"+10":""} XP</span>
-              {task.recurring!=="None"&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:"#ffffff08",color:"#777"}}>↺ {task.recurring}</span>}
-              {task.gcalId&&<span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:"#4285F418",color:"#4285F4",border:"1px solid #4285F433"}}>📅 GCal</span>}
+              <span style={{fontSize:14,fontWeight:600,color:task.done?"#555":"#e8e8f0",textDecoration:task.done?"line-through":"none"}}>
+                {task.title}
+              </span>
+              <span style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:pri.bg,color:pri.color,fontWeight:700,border:`1px solid ${pri.color}44`}}>
+                {task.priority}
+              </span>
+              <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:"#FFD74018",color:"#FFD740",border:"1px solid #FFD74033"}}>
+                +{pri.pts}{task.due === TODAY ? "+10" : ""} XP
+              </span>
+              {task.recurring !== "None" && (
+                <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:"#ffffff08",color:"#777"}}>
+                  ↺ {task.recurring}
+                </span>
+              )}
             </div>
+
+            {/* Meta row */}
             <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
               <span style={{fontSize:11,color:cat.color+"bb"}}>{cat.icon} {task.category}</span>
-              {task.due&&<span style={{fontSize:11,color:isOverdue?"#E85D75":"#555"}}>{isOverdue?"⚠ ":""}{task.due}{task.time?" · "+task.time:""}</span>}
-              {repoShort&&<a href={`https://github.com/${task.repo}`} target="_blank" rel="noreferrer" style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#238636",color:"#fff",textDecoration:"none",fontWeight:600,border:"1px solid #2ea04366",display:"flex",alignItems:"center",gap:4}}>🐙 {repoShort}</a>}
-              {task.gcalLink&&<a href={task.gcalLink} target="_blank" rel="noreferrer" style={{fontSize:10,color:"#4285F4",textDecoration:"none"}}>↗ Open</a>}
-              {(task.tags||[]).filter(t=>t!=="gcal").map(tag=><span key={tag} style={{fontSize:10,color:"#444"}}>#{tag}</span>)}
+              {task.due && (
+                <span style={{fontSize:11,color:isOverdue?"#E85D75":"#555"}}>
+                  {isOverdue ? "⚠ " : ""}{task.due}{task.time ? " · " + task.time : ""}
+                </span>
+              )}
+              {repoShort && (
+                <a href={`https://github.com/${task.repo}`} target="_blank" rel="noreferrer"
+                  style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#238636",color:"#fff",textDecoration:"none",fontWeight:600,border:"1px solid #2ea04366",display:"flex",alignItems:"center",gap:4}}>
+                  🐙 {repoShort}
+                </a>
+              )}
+              {gcalLink && (
+                <a href={gcalLink} target="_blank" rel="noreferrer"
+                  style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#4285F418",color:"#4285F4",textDecoration:"none",fontWeight:600,border:"1px solid #4285F433",display:"flex",alignItems:"center",gap:3}}>
+                  📅 Add to GCal
+                </a>
+              )}
+              {(task.tags || []).map(tag => (
+                <span key={tag} style={{fontSize:10,color:"#444"}}>#{tag}</span>
+              ))}
             </div>
           </div>
+
           <div style={{display:"flex",gap:4,flexShrink:0}}>
-            <button onClick={()=>openEdit(task)} style={{background:"#ffffff08",border:"none",borderRadius:7,padding:"5px 8px",cursor:"pointer",color:"#777",fontSize:12}}>✏</button>
-            <button onClick={()=>setTasks(ts=>ts.filter(t=>t.id!==task.id))} style={{background:"#E85D7511",border:"none",borderRadius:7,padding:"5px 8px",cursor:"pointer",color:"#E85D75",fontSize:12}}>✕</button>
+            <button onClick={() => openEdit(task)}
+              style={{background:"#ffffff08",border:"none",borderRadius:7,padding:"5px 8px",cursor:"pointer",color:"#777",fontSize:12}}>✏</button>
+            <button onClick={() => setTasks(ts => ts.filter(t => t.id !== task.id))}
+              style={{background:"#E85D7511",border:"none",borderRadius:7,padding:"5px 8px",cursor:"pointer",color:"#E85D75",fontSize:12}}>✕</button>
           </div>
         </div>
       </div>
     );
   };
 
-  const Section=({title,dot,tasks:ts})=>{
-    const [open,setOpen]=useState(true); if(ts.length===0)return null;
+  // ── SECTION ──────────────────────────────────────────────────────────────
+  const Section = ({ title, dot, tasks:ts }) => {
+    const [open, setOpen] = useState(true);
+    if (ts.length === 0) return null;
     return (
       <div style={{marginBottom:22}}>
-        <button onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:7,background:"none",border:"none",cursor:"pointer",marginBottom:10,padding:0}}>
-          <div style={{width:7,height:7,borderRadius:"50%",background:dot}}/>
+        <button onClick={() => setOpen(o => !o)}
+          style={{display:"flex",alignItems:"center",gap:7,background:"none",border:"none",cursor:"pointer",marginBottom:10,padding:0}}>
+          <div style={{width:7,height:7,borderRadius:"50%",background:dot}} />
           <span style={{fontFamily:"'Press Start 2P',monospace",fontSize:8,color:"#555",letterSpacing:2}}>{title}</span>
           <span style={{fontSize:9,color:"#444",fontFamily:"'Press Start 2P',monospace"}}>({ts.length})</span>
-          <span style={{fontSize:10,color:"#444"}}>{open?"▾":"▸"}</span>
+          <span style={{fontSize:10,color:"#444"}}>{open ? "▾" : "▸"}</span>
         </button>
-        {open&&ts.map(t=><TaskCard key={t.id} task={t}/>)}
+        {open && ts.map(t => <TaskCard key={t.id} task={t} />)}
       </div>
     );
   };
 
+  // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div style={{minHeight:"100vh",background:"#080818",color:"#e8e8f0",fontFamily:"'Nunito',system-ui,sans-serif"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;600;700&display=swap');
-        @keyframes popIn{from{transform:scale(0.5);opacity:0}to{transform:scale(1);opacity:1}}
-        @keyframes shake{0%,100%{transform:rotate(0)}20%{transform:rotate(-8deg)}40%{transform:rotate(8deg)}60%{transform:rotate(-5deg)}80%{transform:rotate(5deg)}}
-        @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
-        @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
-        @keyframes slideDown{from{transform:translateY(-20px);opacity:0}to{transform:translateY(0);opacity:1}}
-        *{box-sizing:border-box} select option{background:#0f0f1e}
-        ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#0a0a18}::-webkit-scrollbar-thumb{background:#2e2e50;border-radius:99px}
-        a{color:inherit}
+        @keyframes popIn  { from{transform:scale(0.5);opacity:0} to{transform:scale(1);opacity:1} }
+        @keyframes shake  { 0%,100%{transform:rotate(0)} 20%{transform:rotate(-8deg)} 40%{transform:rotate(8deg)} 60%{transform:rotate(-5deg)} 80%{transform:rotate(5deg)} }
+        @keyframes pulse  { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+        @keyframes shimmer{ 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+        @keyframes slideDown { from{transform:translateY(-20px);opacity:0} to{transform:translateY(0);opacity:1} }
+        * { box-sizing:border-box; }
+        select option { background:#0f0f1e; }
+        ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#0a0a18} ::-webkit-scrollbar-thumb{background:#2e2e50;border-radius:99px}
+        a { color:inherit; }
       `}</style>
 
-      {floats.map(f=><FloatText key={f.id} text={f.text} color={f.color} x={f.x} y={f.y} onDone={()=>setFloats(fs=>fs.filter(x=>x.id!==f.id))}/>)}
+      {/* Floating XP texts */}
+      {floats.map(f => (
+        <FloatText key={f.id} text={f.text} color={f.color} x={f.x} y={f.y}
+          onDone={() => setFloats(fs => fs.filter(x => x.id !== f.id))} />
+      ))}
 
-      {/* Toast notification */}
-      {notification&&(
-        <div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",background:"#13132a",border:`1px solid ${notification.color}55`,borderRadius:12,padding:"12px 20px",zIndex:9000,color:notification.color,fontWeight:600,fontSize:13,boxShadow:"0 4px 20px #00000066",animation:"slideDown 0.3s ease"}}>
-          {notification.msg}
-        </div>
+      {/* Toast */}
+      {notification && (
+        <div style={{
+          position:"fixed", top:20, left:"50%", transform:"translateX(-50%)",
+          background:"#13132a", border:`1px solid ${notification.color}55`,
+          borderRadius:12, padding:"12px 20px", zIndex:9000,
+          color:notification.color, fontWeight:600, fontSize:13,
+          boxShadow:"0 4px 20px #00000066", animation:"slideDown 0.3s ease",
+        }}>{notification.msg}</div>
       )}
 
       {/* ── HEADER ── */}
       <div style={{background:"linear-gradient(180deg,#13132a,#080818)",borderBottom:"1px solid #1e1e38",padding:"20px 24px 16px"}}>
         <div style={{maxWidth:740,margin:"0 auto"}}>
+
+          {/* Top row */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:10}}>
             <div>
               <h1 style={{fontFamily:"'Press Start 2P',monospace",fontSize:14,color:"#FFD740",margin:0,textShadow:"0 0 12px #FFD74055"}}>⚔ QUEST LOG</h1>
-              <p style={{fontSize:10,color:"#444",margin:"5px 0 0",fontFamily:"'Press Start 2P',monospace"}}>THU · MAR 12 · 2026</p>
+              <p style={{fontSize:10,color:"#444",margin:"5px 0 0",fontFamily:"'Press Start 2P',monospace"}}>
+                {new Date().toDateString().toUpperCase()}
+              </p>
             </div>
             <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
-              {/* Google Calendar btn */}
-              <button onClick={gcalToken?fetchCalEvents:()=>setShowGcal(true)} style={{background:gcalConnected?"#4285F418":"#ffffff05",border:`1px solid ${gcalConnected?"#4285F444":"#2e2e50"}`,borderRadius:10,padding:"7px 12px",cursor:"pointer",color:gcalConnected?"#4285F4":"#555",fontSize:11,display:"flex",alignItems:"center",gap:5}}>
-                📅 {gcalConnected?`${gcalUser||"Calendar"}`:"Connect GCal"}
+              <a href="https://calendar.google.com" target="_blank" rel="noreferrer"
+                style={{background:"#4285F418",border:"1px solid #4285F433",borderRadius:10,padding:"7px 12px",cursor:"pointer",color:"#4285F4",fontSize:11,display:"flex",alignItems:"center",gap:5,textDecoration:"none"}}>
+                📅 Google Calendar
+              </a>
+              <button onClick={() => setShowGhSetup(true)} style={{
+                background: ghUser ? "#23863622" : "#ffffff05",
+                border:`1px solid ${ghUser ? "#238636" : "#2e2e50"}`,
+                borderRadius:10, padding:"7px 12px", cursor:"pointer",
+                color: ghUser ? "#52C97F" : "#555", fontSize:11,
+                display:"flex", alignItems:"center", gap:5,
+              }}>
+                🐙 {ghUser ? ghUser.login : "GitHub"}
               </button>
-              <button onClick={()=>setShowGhSetup(true)} style={{background:ghUser?"#23863622":"#ffffff05",border:`1px solid ${ghUser?"#238636":"#2e2e50"}`,borderRadius:10,padding:"7px 12px",cursor:"pointer",color:ghUser?"#52C97F":"#555",fontSize:11,display:"flex",alignItems:"center",gap:5}}>
-                🐙 {ghUser?ghUser.login:"GitHub"}
+              <button onClick={() => setShowDeploy(true)}
+                style={{background:"#FFD74011",border:"1px solid #FFD74033",borderRadius:10,padding:"7px 11px",cursor:"pointer",color:"#FFD740",fontSize:11}}>
+                🚀
               </button>
-              <button onClick={()=>setShowDeploy(true)} style={{background:"#FFD74011",border:"1px solid #FFD74033",borderRadius:10,padding:"7px 11px",cursor:"pointer",color:"#FFD740",fontSize:11}}>🚀</button>
               <div style={{background:"#FFD74018",border:"1px solid #FFD74033",borderRadius:10,padding:"7px 12px"}}>
                 <span style={{fontFamily:"'Press Start 2P',monospace",fontSize:12,color:"#FFD740"}}>{coins}🪙</span>
               </div>
@@ -698,13 +716,23 @@ export default function App() {
               <span style={{fontFamily:"'Press Start 2P',monospace",fontSize:9,color:"#7C4DFF"}}>LVL {level+1}</span>
             </div>
             <div style={{height:10,background:"#0f0f22",borderRadius:99,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${pct}%`,background:"linear-gradient(90deg,#7C4DFF,#FFD740,#7C4DFF)",backgroundSize:"200% 100%",animation:"shimmer 2s linear infinite",borderRadius:99,transition:"width 0.6s cubic-bezier(.34,1.56,.64,1)"}}/>
+              <div style={{
+                height:"100%", width:`${pct}%`,
+                background:"linear-gradient(90deg,#7C4DFF,#FFD740,#7C4DFF)",
+                backgroundSize:"200% 100%", animation:"shimmer 2s linear infinite",
+                borderRadius:99, transition:"width 0.6s cubic-bezier(.34,1.56,.64,1)",
+              }} />
             </div>
           </div>
 
           {/* Stats */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:13}}>
-            {[{label:"QUESTS",value:tasks.length,color:"#4A90D9"},{label:"TODAY",value:tasks.filter(t=>!t.done&&t.due===TODAY).length,color:"#7C4DFF"},{label:"OVERDUE",value:tasks.filter(t=>!t.done&&t.due&&t.due<TODAY).length,color:"#E85D75"},{label:"DONE",value:tasks.filter(t=>t.done).length,color:"#52C97F"}].map(s=>(
+            {[
+              {label:"QUESTS",  value:tasks.length,                                            color:"#4A90D9"},
+              {label:"TODAY",   value:tasks.filter(t=>!t.done&&t.due===TODAY).length,          color:"#7C4DFF"},
+              {label:"OVERDUE", value:tasks.filter(t=>!t.done&&t.due&&t.due<TODAY).length,     color:"#E85D75"},
+              {label:"DONE",    value:tasks.filter(t=>t.done).length,                          color:"#52C97F"},
+            ].map(s => (
               <div key={s.label} style={{background:"#ffffff04",border:`1px solid ${s.color}22`,borderRadius:10,padding:"9px 11px"}}>
                 <div style={{fontSize:20,fontWeight:700,color:s.color,fontFamily:"'Press Start 2P',monospace"}}>{s.value}</div>
                 <div style={{fontSize:7,color:"#555",fontFamily:"'Press Start 2P',monospace",marginTop:2}}>{s.label}</div>
@@ -712,61 +740,126 @@ export default function App() {
             ))}
           </div>
 
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍  Search quests, #tags or repos..."
-            style={{width:"100%",background:"#ffffff05",border:"1px solid #1e1e38",borderRadius:10,padding:"10px 14px",color:"#e8e8f0",fontSize:14,outline:"none"}}/>
+          {/* Search */}
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍  Search quests, #tags or repos..."
+            style={{width:"100%",background:"#ffffff05",border:"1px solid #1e1e38",borderRadius:10,padding:"10px 14px",color:"#e8e8f0",fontSize:14,outline:"none"}} />
         </div>
       </div>
 
+      {/* ── BODY ── */}
       <div style={{maxWidth:740,margin:"0 auto",padding:"0 24px"}}>
+
+        {/* Tab bar */}
         <div style={{display:"flex",gap:4,paddingTop:16,marginBottom:4,flexWrap:"wrap"}}>
-          {[["quests","⚔ QUESTS"],["collection","🎴 COLLECTION"]].map(([t,label])=>(
-            <button key={t} onClick={()=>setTab(t)} style={{padding:"8px 16px",borderRadius:10,border:`1px solid ${tab===t?"#7C4DFF":"#1e1e38"}`,background:tab===t?"#7C4DFF22":"none",color:tab===t?"#a78bfa":"#555",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:8}}>
-              {label}{t==="collection"?` (${uniqueOwned}/${CREATURES.length})`:""}
+          {[["quests","⚔ QUESTS"],["collection","🎴 COLLECTION"]].map(([t,label]) => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              padding:"8px 16px", borderRadius:10,
+              border:`1px solid ${tab===t ? "#7C4DFF" : "#1e1e38"}`,
+              background: tab===t ? "#7C4DFF22" : "none",
+              color: tab===t ? "#a78bfa" : "#555",
+              cursor:"pointer", fontFamily:"'Press Start 2P',monospace", fontSize:8,
+            }}>
+              {label}{t==="collection" ? ` (${uniqueOwned}/${CREATURES.length})` : ""}
             </button>
           ))}
-          <div style={{flex:1}}/>
-          {gcalConnected&&<button onClick={fetchCalEvents} style={{padding:"8px 14px",borderRadius:10,border:"1px solid #4285F444",background:"#4285F411",color:"#4285F4",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:8}}>📅 SYNC</button>}
-          <button onClick={()=>setShowGacha(true)} style={{padding:"8px 14px",borderRadius:10,border:"1px solid #FFD74044",background:"linear-gradient(135deg,#FFD74022,#FF980022)",color:"#FFD740",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:8}}>🎰 GACHA</button>
-          <button onClick={()=>{setForm({title:"",category:"Work",priority:"Medium",due:"",time:"",recurring:"None",tags:"",repo:null,addToGcal:false});setEditId(null);setShowModal(true);}} style={{padding:"8px 14px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#7C4DFF,#4A90D9)",color:"#fff",cursor:"pointer",fontFamily:"'Press Start 2P',monospace",fontSize:8}}>+ NEW</button>
+          <div style={{flex:1}} />
+          <button onClick={() => setShowGacha(true)} style={{
+            padding:"8px 14px", borderRadius:10,
+            border:"1px solid #FFD74044",
+            background:"linear-gradient(135deg,#FFD74022,#FF980022)",
+            color:"#FFD740", cursor:"pointer",
+            fontFamily:"'Press Start 2P',monospace", fontSize:8,
+          }}>🎰 GACHA</button>
+          <button onClick={() => {
+            setForm({title:"",category:"Work",priority:"Medium",due:"",time:"",recurring:"None",tags:"",repo:null});
+            setEditId(null); setShowModal(true);
+          }} style={{
+            padding:"8px 14px", borderRadius:10, border:"none",
+            background:"linear-gradient(135deg,#7C4DFF,#4A90D9)",
+            color:"#fff", cursor:"pointer",
+            fontFamily:"'Press Start 2P',monospace", fontSize:8,
+          }}>+ NEW</button>
         </div>
 
-        {tab==="quests"&&(
+        {/* Filters */}
+        {tab === "quests" && (
           <>
             <div style={{display:"flex",gap:6,paddingTop:10,paddingBottom:2,flexWrap:"wrap"}}>
-              {["All",...CATEGORIES.map(c=>c.name)].map(c=>{
-                const cat=CATEGORIES.find(x=>x.name===c); const active=catFilter===c;
-                return <button key={c} onClick={()=>setCatFilter(c)} style={{background:active?(c==="All"?"#ffffff12":cat.color+"22"):"#ffffff05",border:`1px solid ${active?(c==="All"?"#fff3":cat.color+"77"):"#1e1e38"}`,borderRadius:20,padding:"5px 11px",cursor:"pointer",color:active?(c==="All"?"#ccc":cat.color):"#555",fontSize:10,fontFamily:"'Press Start 2P',monospace"}}>{c==="All"?c:`${cat.icon} ${c}`}</button>;
+              {["All", ...CATEGORIES.map(c => c.name)].map(c => {
+                const cat    = CATEGORIES.find(x => x.name === c);
+                const active = catFilter === c;
+                return (
+                  <button key={c} onClick={() => setCatFilter(c)} style={{
+                    background: active ? (c==="All" ? "#ffffff12" : cat.color+"22") : "#ffffff05",
+                    border:`1px solid ${active ? (c==="All" ? "#fff3" : cat.color+"77") : "#1e1e38"}`,
+                    borderRadius:20, padding:"5px 11px", cursor:"pointer",
+                    color: active ? (c==="All" ? "#ccc" : cat.color) : "#555",
+                    fontSize:10, fontFamily:"'Press Start 2P',monospace",
+                  }}>{c==="All" ? c : `${cat.icon} ${c}`}</button>
+                );
               })}
-              <div style={{width:1,background:"#1e1e38",margin:"0 2px"}}/>
-              {["All",...PRIORITIES.map(p=>p.name)].map(p=>{
-                const pri=PRIORITIES.find(x=>x.name===p); const active=priFilter===p;
-                return <button key={p} onClick={()=>setPriFilter(p)} style={{background:active&&p!=="All"?pri.bg:active?"#ffffff08":"#ffffff05",border:`1px solid ${active&&p!=="All"?pri.color+"55":"#1e1e38"}`,borderRadius:20,padding:"5px 11px",cursor:"pointer",color:active&&p!=="All"?pri.color:active?"#ccc":"#555",fontSize:10,fontFamily:"'Press Start 2P',monospace"}}>{p}</button>;
+              <div style={{width:1,background:"#1e1e38",margin:"0 2px"}} />
+              {["All", ...PRIORITIES.map(p => p.name)].map(p => {
+                const pri    = PRIORITIES.find(x => x.name === p);
+                const active = priFilter === p;
+                return (
+                  <button key={p} onClick={() => setPriFilter(p)} style={{
+                    background: active && p!=="All" ? pri.bg : active ? "#ffffff08" : "#ffffff05",
+                    border:`1px solid ${active && p!=="All" ? pri.color+"55" : "#1e1e38"}`,
+                    borderRadius:20, padding:"5px 11px", cursor:"pointer",
+                    color: active && p!=="All" ? pri.color : active ? "#ccc" : "#555",
+                    fontSize:10, fontFamily:"'Press Start 2P',monospace",
+                  }}>{p}</button>
+                );
               })}
             </div>
+
+            {/* Task sections */}
             <div style={{marginTop:20}}>
-              <Section title="OVERDUE"   dot="#E85D75" tasks={overdue}/>
-              <Section title="TODAY"     dot="#4A90D9" tasks={todayList}/>
-              <Section title="UPCOMING"  dot="#7C4DFF" tasks={upcoming}/>
-              <Section title="COMPLETED" dot="#52C97F" tasks={done}/>
-              {filtered.length===0&&<div style={{textAlign:"center",padding:"60px 0",fontFamily:"'Press Start 2P',monospace",color:"#2a2a45",fontSize:10}}>NO QUESTS FOUND<br/><br/><span style={{fontSize:8}}>add one ↗</span></div>}
+              <Section title="OVERDUE"   dot="#E85D75" tasks={overdue}   />
+              <Section title="TODAY"     dot="#4A90D9" tasks={todayList} />
+              <Section title="UPCOMING"  dot="#7C4DFF" tasks={upcoming}  />
+              <Section title="COMPLETED" dot="#52C97F" tasks={done}      />
+              {filtered.length === 0 && (
+                <div style={{textAlign:"center",padding:"60px 0",fontFamily:"'Press Start 2P',monospace",color:"#2a2a45",fontSize:10}}>
+                  NO QUESTS FOUND<br/><br/>
+                  <span style={{fontSize:8}}>add one ↗</span>
+                </div>
+              )}
             </div>
           </>
         )}
 
-        {tab==="collection"&&(
+        {/* Collection tab */}
+        {tab === "collection" && (
           <div style={{marginTop:20,paddingBottom:40}}>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:12}}>
-              {CREATURES.map(c=>{
-                const have=collection.some(x=>x.id===c.id), count=collection.filter(x=>x.id===c.id).length, rc=RARITY_CONFIG[c.rarity];
+              {CREATURES.map(c => {
+                const have  = collection.some(x => x.id === c.id);
+                const count = collection.filter(x => x.id === c.id).length;
+                const rc    = RARITY_CONFIG[c.rarity];
                 return (
                   <div key={c.id} style={{textAlign:"center",opacity:have?1:0.3,filter:have?"none":"grayscale(1)"}}>
-                    <div style={{borderRadius:14,border:`2px solid ${have?rc.color+"77":"#222"}`,background:have?`radial-gradient(circle at 60% 40%,${rc.glow},#0a0a18)`:"#111",padding:"13px 8px 10px",position:"relative"}}>
-                      <div style={{fontSize:34}}>{have?c.emoji:"?"}</div>
-                      {count>1&&<div style={{position:"absolute",top:6,right:8,fontSize:8,color:rc.color,fontFamily:"'Press Start 2P',monospace"}}>x{count}</div>}
-                      <div style={{fontSize:8,color:have?rc.color:"#444",fontFamily:"'Press Start 2P',monospace",marginTop:5}}>{have?c.rarity:"????"}</div>
+                    <div style={{
+                      borderRadius:14, border:`2px solid ${have ? rc.color+"77" : "#222"}`,
+                      background: have ? `radial-gradient(circle at 60% 40%,${rc.glow},#0a0a18)` : "#111",
+                      padding:"13px 8px 10px", position:"relative",
+                    }}>
+                      <div style={{fontSize:34}}>{have ? c.emoji : "?"}</div>
+                      {count > 1 && (
+                        <div style={{position:"absolute",top:6,right:8,fontSize:8,color:rc.color,fontFamily:"'Press Start 2P',monospace"}}>
+                          x{count}
+                        </div>
+                      )}
+                      <div style={{fontSize:8,color:have?rc.color:"#444",fontFamily:"'Press Start 2P',monospace",marginTop:5}}>
+                        {have ? c.rarity : "????"}
+                      </div>
                     </div>
-                    <div style={{fontSize:9,color:have?"#ccc":"#444",marginTop:5,fontFamily:"'Press Start 2P',monospace",lineHeight:1.4}}>{have?c.name:"???"}</div>
-                    {have&&<div style={{fontSize:9,color:"#666",marginTop:2}}>{c.type}</div>}
+                    <div style={{fontSize:9,color:have?"#ccc":"#444",marginTop:5,fontFamily:"'Press Start 2P',monospace",lineHeight:1.4}}>
+                      {have ? c.name : "???"}
+                    </div>
+                    {have && <div style={{fontSize:9,color:"#666",marginTop:2}}>{c.type}</div>}
                   </div>
                 );
               })}
@@ -775,12 +868,11 @@ export default function App() {
         )}
       </div>
 
-      {showGacha   &&<GachaModal coins={coins} onClose={()=>setShowGacha(false)} onPull={onGachaPull} collection={collection}/>}
-      {showModal   &&<TaskModal form={form} setForm={setForm} onSave={saveTask} onClose={()=>{setShowModal(false);setEditId(null);}} isEdit={editId!==null} repos={ghRepos} loadingRepos={loadingRepos} gcalConnected={gcalConnected}/>}
-      {showGhSetup &&<GitHubSetup token={ghToken} onSave={t=>{setGhToken(t);setShowGhSetup(false);}} onClose={()=>setShowGhSetup(false)}/>}
-      {showGcal    &&<GCalSetup clientId={gcalClientId} onSave={saveGcalSetup} onDisconnect={disconnectGcal} onClose={()=>setShowGcal(false)} isConnected={gcalConnected} calUser={gcalUser}/>}
-      {showCalPanel&&<CalendarPanel events={calEvents} loading={loadingCal} onClose={()=>setShowCalPanel(false)} onImport={importCalEvent}/>}
-      {showDeploy  &&<DeployGuide onClose={()=>setShowDeploy(false)}/>}
+      {/* ── MODALS ── */}
+      {showGacha   && <GachaModal coins={coins} onClose={() => setShowGacha(false)} onPull={onGachaPull} collection={collection} />}
+      {showModal   && <TaskModal  form={form} setForm={setForm} onSave={saveTask} onClose={() => { setShowModal(false); setEditId(null); }} isEdit={editId !== null} repos={ghRepos} loadingRepos={loadingRepos} />}
+      {showGhSetup && <GitHubSetup token={ghToken} onSave={t => { setGhToken(t); setShowGhSetup(false); }} onClose={() => setShowGhSetup(false)} />}
+      {showDeploy  && <DeployGuide onClose={() => setShowDeploy(false)} />}
     </div>
   );
 }
